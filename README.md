@@ -1,6 +1,6 @@
 # HelpDesk TI · versão em microsserviços
 
-> 🎥 **Vídeo de demonstração:** _(link do vídeo aqui)_
+> 🎥 **Vídeo de demonstração:** https://youtu.be/vVlMsf_rJDA
 
 Trabalho individual de **Arquitetura de Software** (Prof. Filipe Cavalcante).
 Peguei o HelpDesk TI, que era um monólito (uma aplicação, um banco), e separei em microsserviços,
