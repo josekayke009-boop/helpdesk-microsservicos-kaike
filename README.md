@@ -6,7 +6,7 @@ Trabalho individual de **Arquitetura de Software** (Prof. Filipe Cavalcante).
 Peguei o HelpDesk TI, que era um monólito (uma aplicação, um banco), e separei em microsserviços,
 sem perder nenhuma funcionalidade. O enunciado está em [DESAFIO.md](DESAFIO.md).
 
-Aluno: **Kaike**
+**Aluno:** José Kaike Gomes dos Santos · **Matrícula:** 01813144
 
 ## Arquitetura nova
 
