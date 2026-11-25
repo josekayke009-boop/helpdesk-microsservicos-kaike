@@ -11,8 +11,7 @@ COPY comum ./comum
 COPY servicos/usuarios/app ./app
 
 USER helpdesk
-ENV DATABASE_URL=sqlite:////dados/usuarios.db \
-    EXIGIR_SEGREDO=1 \
+ENV EXIGIR_SEGREDO=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 EXPOSE 8000
