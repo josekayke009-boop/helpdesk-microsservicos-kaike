@@ -22,15 +22,27 @@ for colocar o sistema em produção.
 | Erros que vazam detalhes | Erros de banco respondem com mensagem genérica. |
 | Dependências vulneráveis | Versões fixas, `pip-audit` no GitHub Actions a cada envio e Dependabot semanal. |
 | Contêiner | Roda como usuário sem privilégios, sistema de arquivos somente leitura, sem capacidades extras, porta exposta só em `127.0.0.1`. |
-| Segredos no código | Segredos só por variável de ambiente (`.env`, fora do Git). |
+| Segredos no código | Nenhum segredo no código nem no `docker-compose.yml`. O `JWT_SEGREDO` vem do `.env` ou, se não tiver, de um arquivo gerado no 1º start pelo contêiner `segredos`. As senhas dos MySQL também são geradas assim. |
+
+## O que mudou com os microsserviços
+
+| Ponto | Como ficou |
+|---|---|
+| Quem confere o token | **Todos** os serviços (Usuários, Inventário, Chamados e Notificações) conferem assinatura, validade e emissor do token antes de responder. O gateway só repassa. |
+| Token entre serviços | Quando Chamados chama Usuários ou Inventário, ele **repassa o token do usuário** no cabeçalho `Authorization`. O outro serviço confere de novo. |
+| Perfil no token | O token leva `perfil` e `nome`, então os serviços aplicam as permissões sem ir no banco de Usuários. Ponto fraco: um usuário desativado continua com acesso até o token vencer (60 min). `/auth/eu` confere no banco. |
+| Exposição | Só o gateway publica porta. Serviços, bancos e Redis ficam em redes `internal` do Docker. |
+| Banco de outro serviço | Cada MySQL fica numa rede só com o seu serviço: o Chamados nem consegue chegar no banco de Usuários. |
+| Cabeçalhos repassados | O gateway só repassa `Authorization`, `Content-Type` e `Accept` (cookies e outros são descartados). |
+| Limite de login | Agora fica no Redis (compartilhado), então funciona mesmo com várias cópias do serviço de Usuários. |
 
 ## Antes de usar em produção
 
 - Defina `JWT_SEGREDO` com pelo menos 32 caracteres aleatórios.
 - Rode com `DADOS_EXEMPLO=0` (os usuários de exemplo têm senha conhecida) e `DOCS=0`.
 - Coloque o sistema atrás de HTTPS (por exemplo, um proxy reverso com certificado).
-- Troque o SQLite por um banco gerenciado (PostgreSQL) com backup.
-- O limite de tentativas de login fica em memória: com várias instâncias, use um armazenamento compartilhado (Redis).
+- Use bancos gerenciados com backup e senha no Redis (`requirepass`).
+- Considere TLS também entre os serviços (hoje a rede interna do Docker é confiável).
 
 ## Como relatar um problema
 
