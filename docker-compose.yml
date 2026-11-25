@@ -1,22 +1,209 @@
+# HelpDesk TI em microsserviços
+# sobe tudo com:  docker compose up --build
+#
+# Só o gateway publica porta (8000). Os serviços, os bancos e o Redis ficam
+# em redes internas do Docker, sem acesso de fora.
+
+name: helpdesk
+
+# configuração repetida dos serviços Python (contêiner travado)
+x-servico: &servico
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  env_file:
+    - path: .env
+      required: false
+
+# configuração repetida dos MySQL
+x-mysql: &mysql
+  image: mysql:8.4
+  restart: unless-stopped
+  # deixa o MySQL mais leve (é só pra aula, banco pequeno)
+  command: ["--innodb-buffer-pool-size=32M", "--performance-schema=OFF", "--skip-name-resolve"]
+  depends_on:
+    segredos:
+      condition: service_completed_successfully
+
 services:
-  helpdesk:
-    build: .
-    ports:
-      - "127.0.0.1:8000:8000"   # só acessível pelo próprio computador
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+
+  # gera o segredo do JWT e as senhas dos bancos (só na primeira vez)
+  segredos:
+    image: python:3.12-slim
+    command: ["python", "/gerar_segredos.py"]
     volumes:
-      - dados:/dados
-    read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+      - segredos:/segredos
+      - ./infra/gerar_segredos.py:/gerar_segredos.py:ro
+    network_mode: none
+
+  # ---------------- bancos (um por serviço) ----------------
+
+  bd-usuarios:
+    <<: *mysql
+    environment:
+      MYSQL_DATABASE: usuarios
+      MYSQL_USER: helpdesk
+      MYSQL_PASSWORD_FILE: /segredos/bd_usuarios
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes: [dados-usuarios:/var/lib/mysql, segredos:/segredos:ro]
+    networks: [rede-usuarios]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u helpdesk -p\"$$(cat /segredos/bd_usuarios)\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  bd-inventario:
+    <<: *mysql
+    environment:
+      MYSQL_DATABASE: inventario
+      MYSQL_USER: helpdesk
+      MYSQL_PASSWORD_FILE: /segredos/bd_inventario
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes: [dados-inventario:/var/lib/mysql, segredos:/segredos:ro]
+    networks: [rede-inventario]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u helpdesk -p\"$$(cat /segredos/bd_inventario)\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  bd-chamados:
+    <<: *mysql
+    environment:
+      MYSQL_DATABASE: chamados
+      MYSQL_USER: helpdesk
+      MYSQL_PASSWORD_FILE: /segredos/bd_chamados
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes: [dados-chamados:/var/lib/mysql, segredos:/segredos:ro]
+    networks: [rede-chamados]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u helpdesk -p\"$$(cat /segredos/bd_chamados)\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  bd-notificacoes:
+    <<: *mysql
+    environment:
+      MYSQL_DATABASE: notificacoes
+      MYSQL_USER: helpdesk
+      MYSQL_PASSWORD_FILE: /segredos/bd_notificacoes
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes: [dados-notificacoes:/var/lib/mysql, segredos:/segredos:ro]
+    networks: [rede-notificacoes]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u helpdesk -p\"$$(cat /segredos/bd_notificacoes)\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # fila de eventos (Redis Streams) + contador de tentativas de login
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [dados-redis:/data]
+    networks: [rede-eventos]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  # ---------------- serviços ----------------
+
+  usuarios:
+    <<: *servico
+    build: { context: ., dockerfile: servicos/usuarios/Dockerfile }
+    environment:
+      BD_HOST: bd-usuarios
+      BD_NOME: usuarios
+      BD_SENHA_ARQUIVO: /segredos/bd_usuarios
+      JWT_SEGREDO_ARQUIVO: /segredos/jwt_segredo
+      REDIS_URL: redis://redis:6379/0
+    volumes: [segredos:/segredos:ro]
+    networks: [interna, rede-usuarios, rede-eventos]
+    depends_on:
+      bd-usuarios: { condition: service_healthy }
+      redis: { condition: service_started }
+
+  inventario:
+    <<: *servico
+    build: { context: ., dockerfile: servicos/inventario/Dockerfile }
+    environment:
+      BD_HOST: bd-inventario
+      BD_NOME: inventario
+      BD_SENHA_ARQUIVO: /segredos/bd_inventario
+      JWT_SEGREDO_ARQUIVO: /segredos/jwt_segredo
+    volumes: [segredos:/segredos:ro]
+    networks: [interna, rede-inventario]
+    depends_on:
+      bd-inventario: { condition: service_healthy }
+
+  chamados:
+    <<: *servico
+    build: { context: ., dockerfile: servicos/chamados/Dockerfile }
+    environment:
+      BD_HOST: bd-chamados
+      BD_NOME: chamados
+      BD_SENHA_ARQUIVO: /segredos/bd_chamados
+      JWT_SEGREDO_ARQUIVO: /segredos/jwt_segredo
+      REDIS_URL: redis://redis:6379/0
+      USUARIOS_URL: http://usuarios:8000
+      INVENTARIO_URL: http://inventario:8000
+    volumes: [segredos:/segredos:ro]
+    networks: [interna, rede-chamados, rede-eventos]
+    depends_on:
+      bd-chamados: { condition: service_healthy }
+      redis: { condition: service_started }
+
+  notificacoes:
+    <<: *servico
+    build: { context: ., dockerfile: servicos/notificacoes/Dockerfile }
+    environment:
+      BD_HOST: bd-notificacoes
+      BD_NOME: notificacoes
+      BD_SENHA_ARQUIVO: /segredos/bd_notificacoes
+      JWT_SEGREDO_ARQUIVO: /segredos/jwt_segredo
+      REDIS_URL: redis://redis:6379/0
+    volumes: [segredos:/segredos:ro]
+    networks: [interna, rede-notificacoes, rede-eventos]
+    depends_on:
+      bd-notificacoes: { condition: service_healthy }
+      redis: { condition: service_started }
+
+  # o único que aparece pra fora
+  gateway:
+    <<: *servico
+    build: { context: ., dockerfile: gateway/Dockerfile }
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks: [publica, interna]
+    depends_on:
+      usuarios: { condition: service_healthy }
+      inventario: { condition: service_healthy }
+      chamados: { condition: service_healthy }
+      notificacoes: { condition: service_started }
+
+networks:
+  publica: {}                 # só o gateway, pra conseguir publicar a porta 8000
+  interna: { internal: true } # gateway <-> serviços
+  rede-usuarios: { internal: true }     # cada serviço só enxerga o SEU banco
+  rede-inventario: { internal: true }
+  rede-chamados: { internal: true }
+  rede-notificacoes: { internal: true }
+  rede-eventos: { internal: true }      # Redis
 
 volumes:
-  dados:
+  segredos:
+  dados-usuarios:
+  dados-inventario:
+  dados-chamados:
+  dados-notificacoes:
+  dados-redis:
